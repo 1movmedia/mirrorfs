@@ -1,10 +1,12 @@
-CFLAGS = -g -Wall -Wextra -Wno-unused-function -Wno-unused-parameter -Werror
+CFLAGS = -g -Wall -Wextra -Wno-unused-function -Wno-unused-parameter -Werror -D_FILE_OFFSET_BITS=64 `pkg-config fuse --cflags`
+LDLIBS = `pkg-config fuse --libs`
 
-mirrorfs: mirrorfs.c
-	$(CC) $(CFLAGS) mirrorfs.c `pkg-config fuse --cflags --libs` -D_FILE_OFFSET_BITS=64 -o mirrorfs
+.PHONY: all clean test
+
+mirrorfs: mirrorfs.o
 
 clean:
-	rm -f mirrorfs
+	$(RM) mirrorfs mirrorfs.o
 
 all: mirrorfs
 
