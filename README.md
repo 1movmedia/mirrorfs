@@ -14,7 +14,19 @@ On Fedora, install dependencies via:
 sudo dnf install fuse3 fuse3-devel fuse3-libs
 ```
 
-Build via `make` then run via:
+Build via:
+
+```
+make
+```
+
+For static building:
+
+```
+make clean all LDFLAGS=-static
+```
+
+Then run via:
 
 ```
 ./mirrorfs GOOD_PATH TESTING_PATH MOUNT_PATH
