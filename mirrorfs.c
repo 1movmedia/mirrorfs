@@ -1,4 +1,4 @@
-#define FUSE_USE_VERSION 31
+#define FUSE_USE_VERSION 26
 
 #ifdef HAVE_CONFIG_H
 #include <config.h>
@@ -73,27 +73,13 @@ static const char *safe_path(const char *path)
     return path + 1;
 }
 
-static void *mirrorfs_init(struct fuse_conn_info *conn,
-                           struct fuse_config *cfg)
+static void *mirrorfs_init(struct fuse_conn_info *conn)
 {
-    cfg->use_ino = 1;
-
-    /* Pick up changes from lower filesystem right away. This is
-       also necessary for better hardlink support. When the kernel
-       calls the unlink() handler, it does not know the inode of
-       the to-be-removed entry and can therefore not invalidate
-       the cache of the associated inode - resulting in an
-       incorrect st_nlink value being reported for any remaining
-       hardlinks to this inode. */
-    cfg->entry_timeout = 0;
-    cfg->attr_timeout = 0;
-    cfg->negative_timeout = 0;
-
+    (void) conn;
     return NULL;
 }
 
-static int mirrorfs_getattr(const char *path, struct stat *stbuf,
-                            struct fuse_file_info *fi)
+static int mirrorfs_getattr(const char *path, struct stat *stbuf)
 {
     LOG_FUSE_OPERATION("%s", path);
 
@@ -182,10 +168,9 @@ static int mirrorfs_readlink(const char *path, char *buf, size_t size)
 // orders?
 static int mirrorfs_readdir(const char *path, void *buf,
                             fuse_fill_dir_t filler, off_t offset,
-                            struct fuse_file_info *fi,
-                            enum fuse_readdir_flags flags)
+                            struct fuse_file_info *fi)
 {
-    LOG_FUSE_OPERATION("%s %ld 0x%x", path, offset, flags);
+    LOG_FUSE_OPERATION("%s %ld", path, offset);
 
     struct dirent *de;
 
@@ -204,7 +189,7 @@ static int mirrorfs_readdir(const char *path, void *buf,
         memset(&st, 0, sizeof(st));
         st.st_ino = de->d_ino;
         st.st_mode = de->d_type << 12;
-        if (filler(buf, de->d_name, &st, 0, 0)) {
+        if (filler(buf, de->d_name, &st, 0)) {
             break;
         }
     }
@@ -300,14 +285,9 @@ static int mirrorfs_symlink(const char *from, const char *to)
     return 0;
 }
 
-static int mirrorfs_rename(const char *from, const char *to,
-                           unsigned int flags)
+static int mirrorfs_rename(const char *from, const char *to)
 {
-    LOG_FUSE_OPERATION("%s %s 0x%x", from, to, flags);
-
-    if (flags) {
-        return -EINVAL;
-    }
+    LOG_FUSE_OPERATION("%s %s", from, to);
 
     errno = 0;
     int res1 = renameat(mntfd1, safe_path(from), mntfd1, safe_path(to));
@@ -347,8 +327,7 @@ static int mirrorfs_link(const char *from, const char *to)
     return 0;
 }
 
-static int mirrorfs_chmod(const char *path, mode_t mode,
-                          struct fuse_file_info *fi)
+static int mirrorfs_chmod(const char *path, mode_t mode)
 {
     LOG_FUSE_OPERATION("%s 0x%x", path, mode);
 
@@ -369,8 +348,7 @@ static int mirrorfs_chmod(const char *path, mode_t mode,
     return 0;
 }
 
-static int mirrorfs_chown(const char *path, uid_t uid, gid_t gid,
-                          struct fuse_file_info *fi)
+static int mirrorfs_chown(const char *path, uid_t uid, gid_t gid)
 {
     LOG_FUSE_OPERATION("%s %d %d", path, uid, gid);
 
@@ -409,8 +387,7 @@ static int mirrorfs_truncate(const char *path, off_t size,
     return 0;
 }
 
-static int mirrorfs_utimens(const char *path, const struct timespec ts[2],
-                            struct fuse_file_info *fi)
+static int mirrorfs_utimens(const char *path, const struct timespec ts[2])
 {
     LOG_FUSE_OPERATION("%s", path);
 
