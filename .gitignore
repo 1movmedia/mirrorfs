@@ -1,3 +1,4 @@
 mirrorfs
 mirrorfs.o
 .aider*
+!.github
