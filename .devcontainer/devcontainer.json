@@ -1,0 +1,15 @@
+// For format details, see https://aka.ms/devcontainer.json. For config options, see the
+// README at: https://github.com/devcontainers/templates/tree/main/src/alpine
+{
+	"name": "MirrorFS Dev Container",
+
+	"build": {
+		"dockerfile": "Dockerfile"
+	},
+
+	"privileged": true,
+	"securityOpt": [ "seccomp=unconfined" ],
+	"runArgs": [
+		"--device=/dev/fuse"
+	]
+}
