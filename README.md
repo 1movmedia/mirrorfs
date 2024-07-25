@@ -8,10 +8,10 @@ against a known good one, e.g., ext4.
 
 ## Usage
 
-On Fedora, install dependencies via:
+On Alpine Linux, install dependencies via:
 
 ```
-sudo dnf install fuse3 fuse3-devel fuse3-libs
+apk add build-base fuse-dev
 ```
 
 Build via:
@@ -23,8 +23,10 @@ make
 For static building:
 
 ```
-make clean all LDFLAGS=-static
+make clean all LDFLAGS="-static"
 ```
+
+Note: For other distributions, you may need to install the appropriate FUSE development packages.
 
 Then run via:
 
