@@ -1,29 +1,27 @@
-#!/bin/sh
+#!/bin/bash
 
-set -o errexit
-set -o nounset
+which fusermount3 > /dev/null
 
 # setup
-fusermount -q -u mnt || true
-rm -rf a b
-mkdir a b
+mkdir -p mnt a b
+trap 'rm -rf mnt a b' EXIT
+
+set -ex
+
 ./mirrorfs a b mnt
+trap 'fusermount3 -q -u mnt; rm -rf mnt a b' EXIT
 
 # test read and write
 echo foo > mnt/foo
-cat mnt/foo > /dev/null
-[ -f mnt/foo ]
+test $(cat a/foo) == foo
+test $(cat b/foo) == foo
 
 # test rename
 mv mnt/foo mnt/bar
-[ ! -f mnt/foo ]
-[ -f mnt/bar ]
+test $(cat a/bar) == foo
+test $(cat b/bar) == foo
 
 # test metadata
-[ ! -x mnt/bar ]
 chmod +x mnt/bar
-[ -x mnt/bar ]
-
-# clean up
-fusermount -u -z mnt
-rm -rf a b
+test -x a/bar
+test -x b/bar
