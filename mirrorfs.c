@@ -57,10 +57,11 @@
 static int abort_on_difference = 1;
 static int log_operations = 1;
 
-static const char *mntpath1 = NULL;
-static const char *mntpath2 = NULL;
-static int mntfd1 = -1;
-static int mntfd2 = -1;
+#define MAX_MNTPATHS 10  // Maximum number of mount paths
+
+static const char *mntpaths[MAX_MNTPATHS] = {NULL};
+static int mntfds[MAX_MNTPATHS] = {-1};
+static int mntpath_count = 0;
 static int mirror_fds[1024];  // TODO: hardcoded limit
 
 // FUSE delivers paths with a leading slash.  Remove them when possible and
@@ -97,40 +98,51 @@ static int mirrorfs_getattr(const char *path, struct stat *stbuf,
 {
     LOG_FUSE_OPERATION("%s", path);
 
-    struct stat stbuf2;
-    memset(&stbuf2, 0, sizeof(stbuf2));
+    int res[MAX_MNTPATHS];
+    int errnos[MAX_MNTPATHS];
+    struct stat stbufs[MAX_MNTPATHS];
 
-    errno = 0;
-    int res1 = fstatat(mntfd1, safe_path(path), stbuf, AT_SYMLINK_NOFOLLOW);
-    int errno1 = errno;
-
-    errno = 0;
-    int res2 = fstatat(mntfd2, safe_path(path), &stbuf2, AT_SYMLINK_NOFOLLOW);
-    int errno2 = errno;
-
-    ABORT_IF_NOT_EQUAL(res1, res2);
-    ABORT_IF_NOT_EQUAL(errno1, errno2);
-    if (res1 == -1) {
-        return -errno;
+    for (int i = 0; i < mntpath_count; i++) {
+        memset(&stbufs[i], 0, sizeof(struct stat));
+        errno = 0;
+        res[i] = fstatat(mntfds[i], safe_path(path), &stbufs[i], AT_SYMLINK_NOFOLLOW);
+        errnos[i] = errno;
     }
 
-    if (memcmp(stbuf, &stbuf2, sizeof(*stbuf)) != 0) {
-        // do not compare st_dev
-        // do not compare st_ino
-        ABORT_IF_NOT_EQUAL(stbuf->st_mode, stbuf2.st_mode);
-        ABORT_IF_NOT_EQUAL(stbuf->st_nlink, stbuf2.st_nlink);
-        ABORT_IF_NOT_EQUAL(stbuf->st_uid, stbuf2.st_uid);
-        ABORT_IF_NOT_EQUAL(stbuf->st_gid, stbuf2.st_gid);
-        // do not compare st_rdev
-        if(!S_ISDIR(stbuf->st_mode)){
-            ABORT_IF_NOT_EQUAL(stbuf->st_size, stbuf2.st_size);
+    // Compare results
+    for (int i = 1; i < mntpath_count; i++) {
+        ABORT_IF_NOT_EQUAL(res[0], res[i]);
+        ABORT_IF_NOT_EQUAL(errnos[0], errnos[i]);
+    }
+
+    if (res[0] == -1) {
+        return -errnos[0];
+    }
+
+    // Compare stat structs
+    for (int i = 1; i < mntpath_count; i++) {
+        if (memcmp(&stbufs[0], &stbufs[i], sizeof(struct stat)) != 0) {
+            ABORT_IF_NOT_EQUAL(stbufs[0].st_mode, stbufs[i].st_mode);
+            ABORT_IF_NOT_EQUAL(stbufs[0].st_nlink, stbufs[i].st_nlink);
+            ABORT_IF_NOT_EQUAL(stbufs[0].st_uid, stbufs[i].st_uid);
+            ABORT_IF_NOT_EQUAL(stbufs[0].st_gid, stbufs[i].st_gid);
+            if(!S_ISDIR(stbufs[0].st_mode)){
+                ABORT_IF_NOT_EQUAL(stbufs[0].st_size, stbufs[i].st_size);
+            }
+            // TODO: compare other fields?
+            // TODO: compare st_ino?
+            // TODO: compare st_dev?
+            // TODO: compare st_rdev?
+            // TODO: compare st_blksize?
+            // TODO: compare st_blocks?
+            // TODO: compare st_atime?
+            // TODO: compare st_mtime?
+            // TODO: compare st_ctime?
         }
-        // do not compare st_blksize
-        // do not compare st_blocks
-        // do not compare st_atim
-        // do not compare st_mtim
-        // do not compare st_ctim
     }
+
+    // Copy the result to the output buffer
+    memcpy(stbuf, &stbufs[0], sizeof(struct stat));
 
     return 0;
 }
@@ -139,18 +151,23 @@ static int mirrorfs_access(const char *path, int mask)
 {
     LOG_FUSE_OPERATION("%s 0x%x", path, mask);
 
-    errno = 0;
-    int res1 = faccessat(mntfd1, safe_path(path), mask, 0);
-    int errno1 = errno;
+    int res[MAX_MNTPATHS];
+    int errnos[MAX_MNTPATHS];
 
-    errno = 0;
-    int res2 = faccessat(mntfd2, safe_path(path), mask, 0);
-    int errno2 = errno;
+    for (int i = 0; i < mntpath_count; i++) {
+        errno = 0;
+        res[i] = faccessat(mntfds[i], safe_path(path), mask, 0);
+        errnos[i] = errno;
+    }
 
-    ABORT_IF_NOT_EQUAL(res1, res2);
-    ABORT_IF_NOT_EQUAL(errno1, errno2);
-    if (res1 == -1) {
-        return -errno;
+    // Compare results
+    for (int i = 1; i < mntpath_count; i++) {
+        ABORT_IF_NOT_EQUAL(res[0], res[i]);
+        ABORT_IF_NOT_EQUAL(errnos[0], errnos[i]);
+    }
+
+    if (res[0] == -1) {
+        return -errnos[0];
     }
 
     return 0;
@@ -160,21 +177,40 @@ static int mirrorfs_readlink(const char *path, char *buf, size_t size)
 {
     LOG_FUSE_OPERATION("%s %zu", path, size);
 
-    errno = 0;
-    int res1 = readlinkat(mntfd1, safe_path(path), buf, size - 1);
-    int errno1 = errno;
+    int res[MAX_MNTPATHS];
+    int errnos[MAX_MNTPATHS];
+    char *bufs[MAX_MNTPATHS];
 
-    errno = 0;
-    int res2 = readlinkat(mntfd2, safe_path(path), buf, size - 1);
-    int errno2 = errno;
-
-    ABORT_IF_NOT_EQUAL(res1, res2);
-    ABORT_IF_NOT_EQUAL(errno1, errno2);
-    if (res1 == -1) {
-        return -errno;
+    for (int i = 0; i < mntpath_count; i++) {
+        bufs[i] = malloc(size);
+        errno = 0;
+        res[i] = readlinkat(mntfds[i], safe_path(path), bufs[i], size - 1);
+        errnos[i] = errno;
     }
 
-    buf[res1] = '\0';
+    // Compare results
+    for (int i = 1; i < mntpath_count; i++) {
+        ABORT_IF_NOT_EQUAL(res[0], res[i]);
+        ABORT_IF_NOT_EQUAL(errnos[0], errnos[i]);
+        if (res[0] != -1 && memcmp(bufs[0], bufs[i], res[0]) != 0) {
+            abort();
+        }
+    }
+
+    if (res[0] == -1) {
+        for (int i = 0; i < mntpath_count; i++) {
+            free(bufs[i]);
+        }
+        return -errnos[0];
+    }
+
+    memcpy(buf, bufs[0], res[0]);
+    buf[res[0]] = '\0';
+
+    for (int i = 0; i < mntpath_count; i++) {
+        free(bufs[i]);
+    }
+
     return 0;
 }
 
@@ -188,18 +224,27 @@ static int mirrorfs_readdir(const char *path, void *buf,
     LOG_FUSE_OPERATION("%s %ld 0x%x", path, offset, flags);
 
     struct dirent *de;
+    DIR *dps[MAX_MNTPATHS];
+    int dirfds[MAX_MNTPATHS];
 
-    int dir1fd = openat(mntfd1, safe_path(path), O_DIRECTORY);
-    int dir2fd = openat(mntfd2, safe_path(path), O_DIRECTORY);
-    ABORT_IF_INCONSISTENT_FD(dir1fd, dir2fd);
-
-    DIR *dp1 = fdopendir(dir1fd);
-    DIR *dp2 = fdopendir(dir2fd);
-    if (dp1 == NULL || dp2 == NULL) {
-        return -errno;
+    for (int i = 0; i < mntpath_count; i++) {
+        dirfds[i] = openat(mntfds[i], safe_path(path), O_DIRECTORY);
+        if (dirfds[i] == -1) {
+            for (int j = 0; j < i; j++) {
+                close(dirfds[j]);
+            }
+            return -errno;
+        }
+        dps[i] = fdopendir(dirfds[i]);
+        if (dps[i] == NULL) {
+            for (int j = 0; j <= i; j++) {
+                close(dirfds[j]);
+            }
+            return -errno;
+        }
     }
 
-    while ((de = readdir(dp1)) != NULL) {
+    while ((de = readdir(dps[0])) != NULL) {
         struct stat st;
         memset(&st, 0, sizeof(st));
         st.st_ino = de->d_ino;
@@ -207,12 +252,21 @@ static int mirrorfs_readdir(const char *path, void *buf,
         if (filler(buf, de->d_name, &st, 0, 0)) {
             break;
         }
+        
+        // Check if the same entry exists in all directories
+        for (int i = 1; i < mntpath_count; i++) {
+            struct dirent *de_i = readdir(dps[i]);
+            if (de_i == NULL || strcmp(de->d_name, de_i->d_name) != 0) {
+                fprintf(stderr, "Inconsistent directory entry: %s\n", de->d_name);
+                abort();
+            }
+        }
     }
 
-    closedir(dp1);
-    closedir(dp2);
-    close(dir1fd);
-    close(dir2fd);
+    for (int i = 0; i < mntpath_count; i++) {
+        closedir(dps[i]);
+        close(dirfds[i]);
+    }
     return 0;
 }
 
@@ -220,18 +274,23 @@ static int mirrorfs_mkdir(const char *path, mode_t mode)
 {
     LOG_FUSE_OPERATION("%s 0x%x", path, mode);
 
-    errno = 0;
-    int res1 = mkdirat(mntfd1, safe_path(path), mode);
-    int errno1 = errno;
+    int res[MAX_MNTPATHS];
+    int errnos[MAX_MNTPATHS];
 
-    errno = 0;
-    int res2 = mkdirat(mntfd2, safe_path(path), mode);
-    int errno2 = errno;
+    for (int i = 0; i < mntpath_count; i++) {
+        errno = 0;
+        res[i] = mkdirat(mntfds[i], safe_path(path), mode);
+        errnos[i] = errno;
+    }
 
-    ABORT_IF_NOT_EQUAL(res1, res2);
-    ABORT_IF_NOT_EQUAL(errno1, errno2);
-    if (res1 == -1) {
-        return -errno;
+    // Compare results
+    for (int i = 1; i < mntpath_count; i++) {
+        ABORT_IF_NOT_EQUAL(res[0], res[i]);
+        ABORT_IF_NOT_EQUAL(errnos[0], errnos[i]);
+    }
+
+    if (res[0] == -1) {
+        return -errnos[0];
     }
 
     return 0;
@@ -241,18 +300,23 @@ static int mirrorfs_unlink(const char *path)
 {
     LOG_FUSE_OPERATION("%s", path);
 
-    errno = 0;
-    int res1 = unlinkat(mntfd1, safe_path(path), 0);
-    int errno1 = errno;
+    int res[MAX_MNTPATHS];
+    int errnos[MAX_MNTPATHS];
 
-    errno = 0;
-    int res2 = unlinkat(mntfd2, safe_path(path), 0);
-    int errno2 = errno;
+    for (int i = 0; i < mntpath_count; i++) {
+        errno = 0;
+        res[i] = unlinkat(mntfds[i], safe_path(path), 0);
+        errnos[i] = errno;
+    }
 
-    ABORT_IF_NOT_EQUAL(res1, res2);
-    ABORT_IF_NOT_EQUAL(errno1, errno2);
-    if (res1 == -1) {
-        return -errno;
+    // Compare results
+    for (int i = 1; i < mntpath_count; i++) {
+        ABORT_IF_NOT_EQUAL(res[0], res[i]);
+        ABORT_IF_NOT_EQUAL(errnos[0], errnos[i]);
+    }
+
+    if (res[0] == -1) {
+        return -errnos[0];
     }
 
     return 0;
@@ -262,18 +326,23 @@ static int mirrorfs_rmdir(const char *path)
 {
     LOG_FUSE_OPERATION("%s", path);
 
-    errno = 0;
-    int res1 = unlinkat(mntfd1, path, AT_REMOVEDIR);
-    int errno1 = errno;
+    int res[MAX_MNTPATHS];
+    int errnos[MAX_MNTPATHS];
 
-    errno = 0;
-    int res2 = unlinkat(mntfd2, path, AT_REMOVEDIR);
-    int errno2 = errno;
+    for (int i = 0; i < mntpath_count; i++) {
+        errno = 0;
+        res[i] = unlinkat(mntfds[i], safe_path(path), AT_REMOVEDIR);
+        errnos[i] = errno;
+    }
 
-    ABORT_IF_NOT_EQUAL(res1, res2);
-    ABORT_IF_NOT_EQUAL(errno1, errno2);
-    if (res1 == -1) {
-        return -errno;
+    // Compare results
+    for (int i = 1; i < mntpath_count; i++) {
+        ABORT_IF_NOT_EQUAL(res[0], res[i]);
+        ABORT_IF_NOT_EQUAL(errnos[0], errnos[i]);
+    }
+
+    if (res[0] == -1) {
+        return -errnos[0];
     }
 
     return 0;
@@ -283,18 +352,23 @@ static int mirrorfs_symlink(const char *from, const char *to)
 {
     LOG_FUSE_OPERATION("%s %s", from, to);
 
-    errno = 0;
-    int res1 = symlinkat(from, mntfd1, safe_path(to));
-    int errno1 = errno;
+    int res[MAX_MNTPATHS];
+    int errnos[MAX_MNTPATHS];
 
-    errno = 0;
-    int res2 = symlinkat(from, mntfd2, safe_path(to));
-    int errno2 = errno;
+    for (int i = 0; i < mntpath_count; i++) {
+        errno = 0;
+        res[i] = symlinkat(from, mntfds[i], safe_path(to));
+        errnos[i] = errno;
+    }
 
-    ABORT_IF_NOT_EQUAL(res1, res2);
-    ABORT_IF_NOT_EQUAL(errno1, errno2);
-    if (res1 == -1) {
-        return -errno;
+    // Compare results
+    for (int i = 1; i < mntpath_count; i++) {
+        ABORT_IF_NOT_EQUAL(res[0], res[i]);
+        ABORT_IF_NOT_EQUAL(errnos[0], errnos[i]);
+    }
+
+    if (res[0] == -1) {
+        return -errnos[0];
     }
 
     return 0;
@@ -309,18 +383,23 @@ static int mirrorfs_rename(const char *from, const char *to,
         return -EINVAL;
     }
 
-    errno = 0;
-    int res1 = renameat(mntfd1, safe_path(from), mntfd1, safe_path(to));
-    int errno1 = errno;
+    int res[MAX_MNTPATHS];
+    int errnos[MAX_MNTPATHS];
 
-    errno = 0;
-    int res2 = renameat(mntfd2, safe_path(from), mntfd2, safe_path(to));
-    int errno2 = errno;
+    for (int i = 0; i < mntpath_count; i++) {
+        errno = 0;
+        res[i] = renameat(mntfds[i], safe_path(from), mntfds[i], safe_path(to));
+        errnos[i] = errno;
+    }
 
-    ABORT_IF_NOT_EQUAL(res1, res2);
-    ABORT_IF_NOT_EQUAL(errno1, errno2);
-    if (res1 == -1) {
-        return -errno;
+    // Compare results
+    for (int i = 1; i < mntpath_count; i++) {
+        ABORT_IF_NOT_EQUAL(res[0], res[i]);
+        ABORT_IF_NOT_EQUAL(errnos[0], errnos[i]);
+    }
+
+    if (res[0] == -1) {
+        return -errnos[0];
     }
 
     return 0;
@@ -330,18 +409,23 @@ static int mirrorfs_link(const char *from, const char *to)
 {
     LOG_FUSE_OPERATION("%s %s", from, to);
 
-    errno = 0;
-    int res1 = linkat(mntfd1, from, mntfd1, to, 0);
-    int errno1 = errno;
+    int res[MAX_MNTPATHS];
+    int errnos[MAX_MNTPATHS];
 
-    errno = 0;
-    int res2 = linkat(mntfd1, from, mntfd1, to, 0);
-    int errno2 = errno;
+    for (int i = 0; i < mntpath_count; i++) {
+        errno = 0;
+        res[i] = linkat(mntfds[i], safe_path(from), mntfds[i], safe_path(to), 0);
+        errnos[i] = errno;
+    }
 
-    ABORT_IF_NOT_EQUAL(res1, res2);
-    ABORT_IF_NOT_EQUAL(errno1, errno2);
-    if (res1 == -1) {
-        return -errno;
+    // Compare results
+    for (int i = 1; i < mntpath_count; i++) {
+        ABORT_IF_NOT_EQUAL(res[0], res[i]);
+        ABORT_IF_NOT_EQUAL(errnos[0], errnos[i]);
+    }
+
+    if (res[0] == -1) {
+        return -errnos[0];
     }
 
     return 0;
@@ -352,18 +436,23 @@ static int mirrorfs_chmod(const char *path, mode_t mode,
 {
     LOG_FUSE_OPERATION("%s 0x%x", path, mode);
 
-    errno = 0;
-    int res1 = fchmodat(mntfd1, safe_path(path), mode, 0);
-    int errno1 = errno;
+    int res[MAX_MNTPATHS];
+    int errnos[MAX_MNTPATHS];
 
-    errno = 0;
-    int res2 = fchmodat(mntfd2, safe_path(path), mode, 0);
-    int errno2 = errno;
+    for (int i = 0; i < mntpath_count; i++) {
+        errno = 0;
+        res[i] = fchmodat(mntfds[i], safe_path(path), mode, 0);
+        errnos[i] = errno;
+    }
 
-    ABORT_IF_NOT_EQUAL(res1, res2);
-    ABORT_IF_NOT_EQUAL(errno1, errno2);
-    if (res1 == -1) {
-        return -errno;
+    // Compare results
+    for (int i = 1; i < mntpath_count; i++) {
+        ABORT_IF_NOT_EQUAL(res[0], res[i]);
+        ABORT_IF_NOT_EQUAL(errnos[0], errnos[i]);
+    }
+
+    if (res[0] == -1) {
+        return -errnos[0];
     }
 
     return 0;
@@ -374,24 +463,30 @@ static int mirrorfs_chown(const char *path, uid_t uid, gid_t gid,
 {
     LOG_FUSE_OPERATION("%s %d %d", path, uid, gid);
 
-    errno = 0;
-    int res1 = fchownat(mntfd1, safe_path(path), uid, gid, 0);
-    int errno1 = errno;
+    int res[MAX_MNTPATHS];
+    int errnos[MAX_MNTPATHS];
 
-    errno = 0;
-    int res2 = fchownat(mntfd2, safe_path(path), uid, gid, 0);
-    int errno2 = errno;
+    for (int i = 0; i < mntpath_count; i++) {
+        errno = 0;
+        res[i] = fchownat(mntfds[i], safe_path(path), uid, gid, 0);
+        errnos[i] = errno;
+    }
 
-    ABORT_IF_NOT_EQUAL(res1, res2);
-    ABORT_IF_NOT_EQUAL(errno1, errno2);
-    if (res1 == -1) {
-        return -errno;
+    // Compare results
+    for (int i = 1; i < mntpath_count; i++) {
+        ABORT_IF_NOT_EQUAL(res[0], res[i]);
+        ABORT_IF_NOT_EQUAL(errnos[0], errnos[i]);
+    }
+
+    if (res[0] == -1) {
+        return -errnos[0];
     }
 
     return 0;
 }
 
 // TODO: not implemented: call open and ftruncate whe fi is NULL?
+// TODO: not implemented: call open and ftruncate when fi is NULL?
 static int mirrorfs_truncate(const char *path, off_t size,
                              struct fuse_file_info *fi)
 {
@@ -414,18 +509,23 @@ static int mirrorfs_utimens(const char *path, const struct timespec ts[2],
 {
     LOG_FUSE_OPERATION("%s", path);
 
-    errno = 0;
-    int res1 = utimensat(mntfd1, safe_path(path), ts, AT_SYMLINK_NOFOLLOW);
-    int errno1 = errno;
+    int res[MAX_MNTPATHS];
+    int errnos[MAX_MNTPATHS];
 
-    errno = 0;
-    int res2 = utimensat(mntfd2, safe_path(path), ts, AT_SYMLINK_NOFOLLOW);
-    int errno2 = errno;
+    for (int i = 0; i < mntpath_count; i++) {
+        errno = 0;
+        res[i] = utimensat(mntfds[i], safe_path(path), ts, AT_SYMLINK_NOFOLLOW);
+        errnos[i] = errno;
+    }
 
-    ABORT_IF_NOT_EQUAL(res1, res2);
-    ABORT_IF_NOT_EQUAL(errno1, errno2);
-    if (res1 == -1) {
-        return -errno;
+    // Compare results
+    for (int i = 1; i < mntpath_count; i++) {
+        ABORT_IF_NOT_EQUAL(res[0], res[i]);
+        ABORT_IF_NOT_EQUAL(errnos[0], errnos[i]);
+    }
+
+    if (res[0] == -1) {
+        return -errnos[0];
     }
 
     return 0;
@@ -436,23 +536,30 @@ static int mirrorfs_create(const char *path, mode_t mode,
 {
     LOG_FUSE_OPERATION("%s %o 0x%x", path, mode, fi->flags);
 
-    errno = 0;
-    int fd1 = openat(mntfd1, safe_path(path), fi->flags, mode);
-    int errno1 = errno;
+    int fds[MAX_MNTPATHS];
+    int errnos[MAX_MNTPATHS];
 
-    errno = 0;
-    int fd2 = openat(mntfd2, safe_path(path), fi->flags, mode);
-    int errno2 = errno;
-
-    ABORT_IF_INCONSISTENT_FD(fd1, fd2);
-    ABORT_IF_NOT_EQUAL(errno1, errno2);
-    if (fd1 == -1) {
-        return -errno;
+    for (int i = 0; i < mntpath_count; i++) {
+        errno = 0;
+        fds[i] = openat(mntfds[i], safe_path(path), fi->flags, mode);
+        errnos[i] = errno;
     }
 
-    fi->fh = fd1;
-    assert(mirror_fds[fi->fh] == -1);
-    mirror_fds[fi->fh] = fd2;
+    // Compare results
+    for (int i = 1; i < mntpath_count; i++) {
+        ABORT_IF_INCONSISTENT_FD(fds[0], fds[i]);
+        ABORT_IF_NOT_EQUAL(errnos[0], errnos[i]);
+    }
+
+    if (fds[0] == -1) {
+        return -errnos[0];
+    }
+
+    fi->fh = fds[0];
+    for (int i = 1; i < mntpath_count; i++) {
+        assert(mirror_fds[fi->fh * (MAX_MNTPATHS - 1) + i - 1] == -1);
+        mirror_fds[fi->fh * (MAX_MNTPATHS - 1) + i - 1] = fds[i];
+    }
     return 0;
 }
 
@@ -460,23 +567,30 @@ static int mirrorfs_open(const char *path, struct fuse_file_info *fi)
 {
     LOG_FUSE_OPERATION("%s", path);
 
-    errno = 0;
-    int fd1 = openat(mntfd1, safe_path(path), fi->flags);
-    int errno1 = errno;
+    int fds[MAX_MNTPATHS];
+    int errnos[MAX_MNTPATHS];
 
-    errno = 0;
-    int fd2 = openat(mntfd2, safe_path(path), fi->flags);
-    int errno2 = errno;
-
-    ABORT_IF_INCONSISTENT_FD(fd1, fd2);
-    ABORT_IF_NOT_EQUAL(errno1, errno2);
-    if (fd1 == -1) {
-        return -errno;
+    for (int i = 0; i < mntpath_count; i++) {
+        errno = 0;
+        fds[i] = openat(mntfds[i], safe_path(path), fi->flags);
+        errnos[i] = errno;
     }
 
-    fi->fh = fd1;
-    assert(mirror_fds[fi->fh] == -1);
-    mirror_fds[fi->fh] = fd2;
+    // Compare results
+    for (int i = 1; i < mntpath_count; i++) {
+        ABORT_IF_INCONSISTENT_FD(fds[0], fds[i]);
+        ABORT_IF_NOT_EQUAL(errnos[0], errnos[i]);
+    }
+
+    if (fds[0] == -1) {
+        return -errnos[0];
+    }
+
+    fi->fh = fds[0];
+    for (int i = 1; i < mntpath_count; i++) {
+        assert(mirror_fds[fi->fh * (MAX_MNTPATHS - 1) + i - 1] == -1);
+        mirror_fds[fi->fh * (MAX_MNTPATHS - 1) + i - 1] = fds[i];
+    }
     return 0;
 }
 
@@ -485,46 +599,58 @@ static int mirrorfs_read(const char *path, char *buf, size_t size,
 {
     LOG_FUSE_OPERATION("%s %zu %ld %p", path, size, offset, fi);
 
-    int fd1;
-    int fd2;
+    int fds[MAX_MNTPATHS];
 
     if (fi == NULL) {
-        fd1 = openat(mntfd1, safe_path(path), O_RDONLY);
-        fd2 = openat(mntfd2, safe_path(path), O_RDONLY);
+        for (int i = 0; i < mntpath_count; i++) {
+            fds[i] = openat(mntfds[i], safe_path(path), O_RDONLY);
+            if (fds[i] == -1) {
+                for (int j = 0; j < i; j++) {
+                    close(fds[j]);
+                }
+                return -errno;
+            }
+        }
     } else {
-        fd1 = fi->fh;
-        fd2 = mirror_fds[fi->fh];
+        fds[0] = fi->fh;
+        for (int i = 1; i < mntpath_count; i++) {
+            fds[i] = mirror_fds[fi->fh * (MAX_MNTPATHS - 1) + i - 1];
+        }
     }
 
-    if (fd1 == -1 || fd2 == -1) {
-        return -errno;
+    char *bufs[MAX_MNTPATHS];
+    int res[MAX_MNTPATHS];
+    int errnos[MAX_MNTPATHS];
+
+    for (int i = 0; i < mntpath_count; i++) {
+        bufs[i] = (i == 0) ? buf : malloc(size);
+        errno = 0;
+        res[i] = pread(fds[i], bufs[i], size, offset);
+        errnos[i] = errno;
     }
 
-    char *buf2 = malloc(size);
-
-    errno = 0;
-    int res1 = pread(fd1, buf, size, offset);
-    int errno1 = errno;
-
-    errno = 0;
-    int res2 = pread(fd2, buf2, size, offset);
-    int errno2 = errno;
-
-    ABORT_IF_NOT_EQUAL(res1, res2);
-    ABORT_IF_NOT_EQUAL(errno1, errno2);
-    if (res1 == -1) {
-        res1 = -errno;
-    } else if (memcmp(buf, buf2, res1) != 0) {
-        abort();
+    // Compare results
+    for (int i = 1; i < mntpath_count; i++) {
+        ABORT_IF_NOT_EQUAL(res[0], res[i]);
+        ABORT_IF_NOT_EQUAL(errnos[0], errnos[i]);
+        if (res[0] != -1 && memcmp(bufs[0], bufs[i], res[0]) != 0) {
+            abort();
+        }
     }
 
-    free(buf2);
+    int result = (res[0] == -1) ? -errnos[0] : res[0];
+
+    for (int i = 1; i < mntpath_count; i++) {
+        free(bufs[i]);
+    }
 
     if (fi == NULL) {
-        close(fd1);
-        close(fd2);
+        for (int i = 0; i < mntpath_count; i++) {
+            close(fds[i]);
+        }
     }
-    return res1;
+
+    return result;
 }
 
 static int mirrorfs_write(const char *path, const char *buf, size_t size,
@@ -532,41 +658,56 @@ static int mirrorfs_write(const char *path, const char *buf, size_t size,
 {
     LOG_FUSE_OPERATION("%s %lu %ld", path, size, offset);
 
-    int fd1;
-    int fd2;
+    int fds[MAX_MNTPATHS];
+
+    fprintf(stderr, "mirrorfs_write: path=%s, size=%zu, offset=%ld\n", path, size, offset);
 
     if (fi == NULL) {
-        fd1 = openat(mntfd1, safe_path(path), O_WRONLY);
-        fd2 = openat(mntfd2, safe_path(path), O_WRONLY);
+        fprintf(stderr, "mirrorfs_write: fi is NULL, opening files\n");
+        for (int i = 0; i < mntpath_count; i++) {
+            fds[i] = openat(mntfds[i], safe_path(path), O_WRONLY);
+            if (fds[i] == -1) {
+                fprintf(stderr, "mirrorfs_write: Failed to open file %d: %s\n", i, strerror(errno));
+                for (int j = 0; j < i; j++) {
+                    close(fds[j]);
+                }
+                return -errno;
+            }
+        }
     } else {
-        fd1 = fi->fh;
-        fd2 = mirror_fds[fi->fh];
+        fprintf(stderr, "mirrorfs_write: fi is not NULL, using existing file handles\n");
+        fds[0] = fi->fh;
+        for (int i = 1; i < mntpath_count; i++) {
+            fds[i] = mirror_fds[fi->fh * (MAX_MNTPATHS - 1) + i - 1];
+        }
     }
 
-    ABORT_IF_INCONSISTENT_FD(fd1, fd2);
-    if (fd1 == -1) {
-        return -errno;
+    int res[MAX_MNTPATHS];
+    int errnos[MAX_MNTPATHS];
+
+    for (int i = 0; i < mntpath_count; i++) {
+        errno = 0;
+        res[i] = pwrite(fds[i], buf, size, offset);
+        errnos[i] = errno;
+        fprintf(stderr, "mirrorfs_write: pwrite to file %d returned %d, errno=%d\n", i, res[i], errnos[i]);
     }
 
-    errno = 0;
-    int res1 = pwrite(fd1, buf, size, offset);
-    int errno1 = errno;
-
-    errno = 0;
-    int res2 = pwrite(fd2, buf, size, offset);
-    int errno2 = errno;
-
-    ABORT_IF_NOT_EQUAL(res1, res2);
-    ABORT_IF_NOT_EQUAL(errno1, errno2);
-    if (res1 == -1) {
-        res1 = -errno;
+    // Compare results
+    for (int i = 1; i < mntpath_count; i++) {
+        ABORT_IF_NOT_EQUAL(res[0], res[i]);
+        ABORT_IF_NOT_EQUAL(errnos[0], errnos[i]);
     }
+
+    int result = (res[0] == -1) ? -errnos[0] : res[0];
 
     if (fi == NULL) {
-        close(fd1);
-        close(fd2);
+        for (int i = 0; i < mntpath_count; i++) {
+            close(fds[i]);
+        }
     }
-    return res1;
+
+    fprintf(stderr, "mirrorfs_write: returning %d\n", result);
+    return result;
 }
 
 static int mirrorfs_release(const char *path, struct fuse_file_info *fi)
@@ -615,15 +756,13 @@ static const struct fuse_operations mirrorfs_oper = {
 static int mirrorfs_opt_proc(void *data, const char *arg, int key,
                              struct fuse_args *outargs)
 {
+    (void) data;
+    (void) outargs;
+
     if (key == FUSE_OPT_KEY_NONOPT) {
-        if (mntpath1 == NULL) {
-            mntpath1 = arg;
+        if (mntpath_count < MAX_MNTPATHS) {
+            mntpaths[mntpath_count++] = arg;
             return 0;
-        } else if (mntpath2 == NULL) {
-            mntpath2 = arg;
-            return 0;
-        } else {
-            return 1;
         }
     }
     return 1;
@@ -635,20 +774,29 @@ int main(int argc, char *argv[])
     umask(0);
     struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
     int res = fuse_opt_parse(&args, NULL, NULL, mirrorfs_opt_proc);
-    if (res != 0 || mntpath1 == NULL || mntpath2 == NULL) {
+    if (res != 0 || mntpath_count < 3) {
         // TODO: hook into FUSE help mechanism?
-        printf("Usage: mntpath1 mntpath2 mountpoint\n");
+        fprintf(stderr, "Usage: %s <mntpath1> <mntpath2> [<mntpath3> ...] <mountpoint>\n", argv[0]);
         return 1;
     }
-    mntfd1 = open(mntpath1, O_DIRECTORY);
-    if (mntfd1 == -1) {
-        perror("could not open mntpath1");
-        return 1;
+    
+    // The last path is the mount point, so we don't open it
+    for (int i = 0; i < mntpath_count - 1; i++) {
+        mntfds[i] = open(mntpaths[i], O_DIRECTORY);
+        if (mntfds[i] == -1) {
+            fprintf(stderr, "Could not open mntpath%d: %s\n", i+1, strerror(errno));
+            return 1;
+        }
     }
-    mntfd2 = open(mntpath2, O_DIRECTORY);
-    if (mntfd2 == -1) {
-        perror("could not open mntpath2");
-        return 1;
-    }
-    return fuse_main(args.argc, args.argv, &mirrorfs_oper, NULL);
+    
+    // Adjust mntpath_count to exclude the mount point
+    mntpath_count--;
+    
+    // Set up FUSE arguments
+    char *fuse_argv[3];
+    fuse_argv[0] = argv[0];
+    fuse_argv[1] = (char *)mntpaths[mntpath_count];  // Mount point
+    fuse_argv[2] = NULL;
+    
+    return fuse_main(2, fuse_argv, &mirrorfs_oper, NULL);
 }

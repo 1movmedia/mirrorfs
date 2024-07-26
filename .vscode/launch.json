@@ -12,7 +12,7 @@
             "args": [
                 "-f",
                 "-o", "debug",
-                "a", "b", "mnt"
+                "a", "b", "c", "mnt"
             ],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",

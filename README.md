@@ -17,12 +17,14 @@ sudo dnf install fuse3 fuse3-devel fuse3-libs
 Build via `make` then run via:
 
 ```
-./mirrorfs GOOD_PATH TESTING_PATH MOUNT_PATH
+./mirrorfs PATH1 PATH2 [PATH3 ...] MOUNT_PATH
 ```
 
+You can specify up to 9 paths to mirror before the mount path.
+
 If you provide the `-f` option mirrorfs will start in the foreground and log
-its operations.  Now programs can interact with `MOUNT_PATH` as usual.  When
-mirrorfs detects an inconsistency it will log the diverging result and abort.
+its operations. Now programs can interact with `MOUNT_PATH` as usual. When
+mirrorfs detects an inconsistency between any of the mirrored paths, it will log the diverging result and abort.
 
 ## License
 

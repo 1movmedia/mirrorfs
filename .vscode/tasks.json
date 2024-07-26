@@ -26,7 +26,7 @@
         {
             "label": "Prepare test run",
             "type": "shell",
-            "command": "mkdir -p {a,b,mnt}",
+            "command": "mkdir -p {a,b,c,mnt}",
             "dependsOn": "Build",
             "presentation": {
                 "echo": true,
@@ -41,7 +41,7 @@
         {
             "label": "Cleanup after test run",
             "type": "shell",
-            "command": "fusermount3 -q -u mnt; rm -rf {a,b,mnt}",
+            "command": "fusermount3 -q -u mnt; rm -rf {a,b,c,mnt}",
             "presentation": {
                 "echo": true,
                 "reveal": "silent",
