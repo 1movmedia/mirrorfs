@@ -8,8 +8,14 @@ trap 'rm -rf mnt a b c' EXIT
 
 set -ex
 
-valgrind --leak-check=full ./mirrorfs -d a b c mnt
-trap 'fusermount3 -q -u mnt; rm -rf mnt a b c' EXIT
+valgrind --leak-check=full \
+./mirrorfs -f -d a b c mnt &
+mirrorfs_pid=$!
+trap 'fusermount3 -q -u mnt; rm -rf mnt a b c; wait $mirrorfs_pid' EXIT
+
+while ! mountpoint mnt; do
+    sleep 0.1
+done
 
 # test write
 echo foo > mnt/foo
