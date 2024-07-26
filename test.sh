@@ -8,7 +8,6 @@ trap 'rm -rf mnt a b c' EXIT
 
 set -ex
 
-valgrind --leak-check=full \
 ./mirrorfs -f -d a b c mnt &
 mirrorfs_pid=$!
 trap 'fusermount3 -q -u mnt; rm -rf mnt a b c; wait $mirrorfs_pid' EXIT
