@@ -49,7 +49,7 @@
 #define LOG_FUSE_OPERATION(fmt, ...) \
     do { \
         if (log_operations) { \
-            fprintf(stderr, "%s: " fmt "\n", __func__, __VA_ARGS__); \
+            fprintf(stderr, "%s: " fmt "\n", __func__, ##__VA_ARGS__); \
         } \
     } while (0)
 
@@ -660,14 +660,14 @@ static int mirrorfs_write(const char *path, const char *buf, size_t size,
 
     int fds[MAX_MNTPATHS];
 
-    fprintf(stderr, "mirrorfs_write: path=%s, size=%zu, offset=%ld\n", path, size, offset);
+    LOG_FUSE_OPERATION("%s %zu %ld", path, size, offset);
 
     if (fi == NULL) {
-        fprintf(stderr, "mirrorfs_write: fi is NULL, opening files\n");
+        LOG_FUSE_OPERATION("fi is NULL, opening files %s", path);
         for (int i = 0; i < mntpath_count; i++) {
             fds[i] = openat(mntfds[i], safe_path(path), O_WRONLY);
             if (fds[i] == -1) {
-                fprintf(stderr, "mirrorfs_write: Failed to open file %d: %s\n", i, strerror(errno));
+                LOG_FUSE_OPERATION("Failed to open file %d: %s", i, strerror(errno));
                 for (int j = 0; j < i; j++) {
                     close(fds[j]);
                 }
@@ -675,7 +675,7 @@ static int mirrorfs_write(const char *path, const char *buf, size_t size,
             }
         }
     } else {
-        fprintf(stderr, "mirrorfs_write: fi is not NULL, using existing file handles\n");
+        LOG_FUSE_OPERATION("fi is not NULL, using existing file handles %s", path);
         fds[0] = fi->fh;
         for (int i = 1; i < mntpath_count; i++) {
             fds[i] = mirror_fds[fi->fh * (MAX_MNTPATHS - 1) + i - 1];
@@ -689,7 +689,7 @@ static int mirrorfs_write(const char *path, const char *buf, size_t size,
         errno = 0;
         res[i] = pwrite(fds[i], buf, size, offset);
         errnos[i] = errno;
-        fprintf(stderr, "mirrorfs_write: pwrite to file %d returned %d, errno=%d\n", i, res[i], errnos[i]);
+        LOG_FUSE_OPERATION("pwrite to file %d returned %d, errno=%d", i, res[i], errnos[i]);
     }
 
     // Compare results
@@ -706,7 +706,7 @@ static int mirrorfs_write(const char *path, const char *buf, size_t size,
         }
     }
 
-    fprintf(stderr, "mirrorfs_write: returning %d\n", result);
+    LOG_FUSE_OPERATION("returning %d", result);
     return result;
 }
 
