@@ -13,9 +13,22 @@ valgrind --leak-check=full \
 mirrorfs_pid=$!
 trap 'fusermount3 -q -u mnt; rm -rf mnt a b c; wait $mirrorfs_pid' EXIT
 
+# Wait for mount with timeout
+mount_timeout=30
+start_time=$(date +%s)
 while ! mountpoint mnt; do
-    sleep 0.1
+    current_time=$(date +%s)
+    if [ $((current_time - start_time)) -ge $mount_timeout ]; then
+        echo "Timeout waiting for mount"
+        kill $mirrorfs_pid
+        wait $mirrorfs_pid
+        exit 1
+    fi
+    echo "Waiting for mount..."
+    sleep 1
 done
+
+echo "Mount successful"
 
 # test write
 echo foo > mnt/foo
