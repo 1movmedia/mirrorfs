@@ -40,3 +40,5 @@ chmod +x mnt/bar
 test -x a/bar
 test -x b/bar
 test -x c/bar
+
+echo All tests passed
