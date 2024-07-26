@@ -753,30 +753,59 @@ static const struct fuse_operations mirrorfs_oper = {
     .fsync = mirrorfs_fsync,
 };
 
+static void show_help(const char *progname);
+
 static int mirrorfs_opt_proc(void *data, const char *arg, int key,
                              struct fuse_args *outargs)
 {
     (void) data;
     (void) outargs;
 
-    if (key == FUSE_OPT_KEY_NONOPT) {
-        if (mntpath_count < MAX_MNTPATHS) {
-            mntpaths[mntpath_count++] = arg;
-            return 0;
-        }
+    switch (key) {
+        case 'h':
+            show_help(outargs->argv[0]);
+            fuse_opt_free_args(outargs);
+            exit(0);
+        case FUSE_OPT_KEY_NONOPT:
+            if (mntpath_count < MAX_MNTPATHS) {
+                mntpaths[mntpath_count++] = arg;
+                return 0;
+            }
+            break;
     }
     return 1;
+}
+
+static struct fuse_opt mirrorfs_opts[] = {
+    FUSE_OPT_KEY("-h", 'h'),
+    FUSE_OPT_KEY("--help", 'h'),
+    FUSE_OPT_END
+};
+
+static void show_help(const char *progname)
+{
+    printf("usage: %s <mntpath1> <mntpath2> [<mntpath3> ...] <mountpoint> [options]\n\n", progname);
+    printf("File-system specific options:\n"
+           "    <mntpathN>             Path to mirror (at least 2 required)\n"
+           "    <mountpoint>           Where to mount the mirrored file system\n\n");
+    printf("general options:\n");
+    printf("    -o opt,[opt...]        mount options\n");
+    printf("    -h   --help            print help\n");
 }
 
 int main(int argc, char *argv[])
 {
     memset(mirror_fds, -1, sizeof(mirror_fds));
     umask(0);
+
     struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
-    int res = fuse_opt_parse(&args, NULL, NULL, mirrorfs_opt_proc);
+
+    int res = fuse_opt_parse(&args, NULL, mirrorfs_opts, mirrorfs_opt_proc);
+
+    fuse_opt_free_args(&args);
+
     if (res != 0 || mntpath_count < 3) {
-        // TODO: hook into FUSE help mechanism?
-        fprintf(stderr, "Usage: %s <mntpath1> <mntpath2> [<mntpath3> ...] <mountpoint>\n", argv[0]);
+        show_help(argv[0]);
         return 1;
     }
     
