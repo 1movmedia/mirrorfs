@@ -1,2 +1,2 @@
 test-cmd: fusermount -u mnt 2> /dev/null; rm -rf a b c mnt; make clean test
-auto-test: true
+auto-test: false
