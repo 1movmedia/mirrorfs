@@ -11,11 +11,17 @@ set -ex
 valgrind --leak-check=full ./mirrorfs -d a b c mnt
 trap 'fusermount3 -q -u mnt; rm -rf mnt a b c' EXIT
 
-# test read and write
+# test write
 echo foo > mnt/foo
-test $(cat a/foo) == foo
-test $(cat b/foo) == foo
-test $(cat c/foo) == foo
+test "$(cat a/foo)" == foo
+test "$(cat b/foo)" == foo
+test "$(cat c/foo)" == foo
+
+# test read
+echo bar > a/bar
+echo bar > b/bar
+echo bar > c/bar
+test "$(cat mnt/bar)" == bar
 
 # test rename
 mv mnt/foo mnt/bar
