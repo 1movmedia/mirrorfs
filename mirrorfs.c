@@ -588,7 +588,13 @@ static int mirrorfs_open(const char *path, struct fuse_file_info *fi)
 
     fi->fh = fds[0];
     for (int i = 1; i < mntpath_count; i++) {
-        assert(mirror_fds[fi->fh * (MAX_MNTPATHS - 1) + i - 1] == -1);
+        if (fi->fh * (MAX_MNTPATHS - 1) + i - 1 >= 1024) {
+            LOG_FUSE_OPERATION("Error: file descriptor index out of bounds");
+            for (int j = 0; j < mntpath_count; j++) {
+                close(fds[j]);
+            }
+            return -EMFILE;
+        }
         mirror_fds[fi->fh * (MAX_MNTPATHS - 1) + i - 1] = fds[i];
     }
     return 0;
@@ -714,9 +720,14 @@ static int mirrorfs_release(const char *path, struct fuse_file_info *fi)
 {
     LOG_FUSE_OPERATION("%s", path);
 
-    close(mirror_fds[fi->fh]);
-    mirror_fds[fi->fh] = -1;
-    // Must close fd1 after fd2 since mirror_fds uses fd1 as a key.
+    for (int i = 1; i < mntpath_count; i++) {
+        int index = fi->fh * (MAX_MNTPATHS - 1) + i - 1;
+        if (index < 1024 && mirror_fds[index] != -1) {
+            close(mirror_fds[index]);
+            mirror_fds[index] = -1;
+        }
+    }
+    // Must close fi->fh after mirror_fds since mirror_fds uses fi->fh as a key.
     close(fi->fh);
     return 0;
 }
