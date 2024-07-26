@@ -8,7 +8,7 @@ trap 'rm -rf mnt a b c' EXIT
 
 set -ex
 
-./mirrorfs a b c mnt
+valgrind --leak-check=full ./mirrorfs -d a b c mnt
 trap 'fusermount3 -q -u mnt; rm -rf mnt a b c' EXIT
 
 # test read and write
